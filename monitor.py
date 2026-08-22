@@ -5,6 +5,7 @@ import asyncio
 import datetime
 import requests
 import gspread
+import base64
 from google.oauth2.service_account import Credentials
 from aseeralkotb_product_parser import parse_product_urls
 
@@ -17,8 +18,9 @@ REQUEST_DELAY_SEC = 1.5
 
 # Secrets
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_CHAT_IDS = os.getenv("TELEGRAM_CHAT_IDS")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
+GOOGLE_CREDENTIALS_B64 = os.getenv("GOOGLE_CREDENTIALS_B64")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 
 # Sheet Names
@@ -30,7 +32,7 @@ SHEET_ERROR_LOG = "Monitor Log"
 # HELPER FUNCTIONS
 # ==================================================
 def send_telegram_notification(product_name, product_url, changes):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_IDS:
         return
         
     now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -56,17 +58,23 @@ def send_telegram_notification(product_name, product_url, changes):
     message += f"⏰ *Checked:*\n{now}"
     
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True
-    }
     
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Failed to send Telegram message: {e}")
+    for chat_id in TELEGRAM_CHAT_IDS.split(","):
+        chat_id = chat_id.strip()
+        if not chat_id:
+            continue
+        
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
+        }
+        
+        try:
+            requests.post(url, json=payload, timeout=10)
+        except Exception as e:
+            print(f"Failed to send Telegram message to {chat_id}: {e}")
 
 def get_col_index(headers, name, worksheet):
     try:
@@ -103,12 +111,20 @@ def setup_error_log(sh):
 # MAIN LOGIC
 # ==================================================
 async def main():
-    if not GOOGLE_CREDENTIALS_JSON or not SPREADSHEET_ID:
+    if not (GOOGLE_CREDENTIALS_JSON or GOOGLE_CREDENTIALS_B64) or not SPREADSHEET_ID:
         print("Missing Google credentials or Spreadsheet ID")
         sys.exit(1)
         
     # Setup Google Sheets client
-    creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+    try:
+        if GOOGLE_CREDENTIALS_B64:
+            creds_json = base64.b64decode(GOOGLE_CREDENTIALS_B64).decode("utf-8")
+        else:
+            creds_json = GOOGLE_CREDENTIALS_JSON
+        creds_dict = json.loads(creds_json)
+    except Exception as e:
+        print(f"Failed to parse Google credentials JSON: {e}")
+        sys.exit(1)
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     gc = gspread.authorize(creds)
