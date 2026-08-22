@@ -31,13 +31,17 @@ SHEET_ERROR_LOG = "Monitor Log"
 # ==================================================
 # HELPER FUNCTIONS
 # ==================================================
-def send_telegram_notification(product_name, product_url, changes):
+def send_telegram_notification(product_name, product_url, changes, publisher):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_IDS:
         return
         
     now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
     
-    message = f"🔔 *Product Update*\n\n📚 {product_name}\n\n"
+    message = f"🔔 *Product Update*\n\n📚 {product_name}\n"
+    if publisher:
+        message += f"🏢 *Publisher:* {publisher}\n\n"
+    else:
+        message += "\n"
     
     if "priceBefore" in changes:
         old_val = changes["priceBefore"]["old"] or "N/A"
@@ -143,12 +147,13 @@ async def main():
         
     headers = data[0]
     
-    # Get column indices
+    # Get column indices matching the exact screenshot headers
     col_name = get_col_index(headers, "Product Name", products_sheet)
     col_url = get_col_index(headers, "Product URL", products_sheet)
-    col_price_before = get_col_index(headers, "Price Before Sale", products_sheet)
-    col_price_after = get_col_index(headers, "Price After Sale", products_sheet)
-    col_stock = get_col_index(headers, "Stock Status", products_sheet)
+    col_price_before = get_col_index(headers, "Price Before", products_sheet)
+    col_price_after = get_col_index(headers, "Price After", products_sheet)
+    col_stock = get_col_index(headers, "Stock", products_sheet)
+    col_publisher = get_col_index(headers, "publisher", products_sheet)
     
     col_last_checked = get_col_index(headers, "Last Checked", products_sheet)
     col_last_changed = get_col_index(headers, "Last Changed", products_sheet)
@@ -171,6 +176,7 @@ async def main():
             
         product_name = row[col_name - 1]
         product_url = row[col_url - 1]
+        publisher = row[col_publisher - 1] if col_publisher <= len(row) else ""
         
         if not product_url:
             continue
@@ -245,13 +251,15 @@ async def main():
             change_details["priceAfter"] = {"old": old_price_after, "new": new_price_after}
             
         if new_stock is not None and str(old_stock) != str(new_stock):
-            has_changes = True
-            change_details["stock"] = {"old": old_stock, "new": new_stock}
+            # Normalize old stock status to match new parsed value (e.g. "in stock" vs "In Stock")
+            if str(old_stock).lower().strip() != str(new_stock).lower().strip():
+                has_changes = True
+                change_details["stock"] = {"old": old_stock, "new": new_stock}
             
         # Update Sheet & Notify
         if has_changes:
             print(f"Changes detected for {product_name}!")
-            send_telegram_notification(product_name, product_url, change_details)
+            send_telegram_notification(product_name, product_url, change_details, publisher)
             
             updates = []
             if new_price_before is not None:
