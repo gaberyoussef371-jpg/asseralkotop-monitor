@@ -8,7 +8,8 @@ import requests
 import gspread
 import base64
 from google.oauth2.service_account import Credentials
-from aseeralkotb_product_parser import parse_product_urls
+from playwright.async_api import async_playwright
+from aseeralkotb_product_parser import parse_product_page
 
 # ==================================================
 # CONFIGURATION
@@ -176,9 +177,19 @@ async def main():
     
     print(f"Running in {MODE} mode. Checking {limit - 1} products...")
     
-    # Process products sequentially to respect rate limits
-    for i in range(1, limit):
-        row = data[i]
+    # Start a single shared browser session for the entire run
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
+        context = await browser.new_context(locale="ar-EG", user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        ))
+        page = await context.new_page()
+        page.set_default_timeout(30_000)
+        
+        # Process products sequentially to respect rate limits
+        for i in range(1, limit):
+            row = data[i]
         
         # Pad row if it's shorter than headers
         while len(row) < len(headers):
@@ -193,10 +204,9 @@ async def main():
             
         print(f"Checking: {product_name}...")
         
-        # Scrape data using Playwright parser
+        # Scrape data using Playwright parser with the shared page
         try:
-            results = await parse_product_urls([product_url], headless=True)
-            api_result = results[0]
+            api_result = await parse_product_page(page, product_url)
         except Exception as e:
             api_result = {
                 "error": str(e),
@@ -323,6 +333,7 @@ async def main():
         # Rate Limiting
         await asyncio.sleep(REQUEST_DELAY_SEC)
         
+        await browser.close()
     print("Monitoring run complete.")
 
 if __name__ == "__main__":
