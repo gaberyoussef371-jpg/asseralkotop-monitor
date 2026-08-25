@@ -190,148 +190,148 @@ async def main():
         # Process products sequentially to respect rate limits
         for i in range(1, limit):
             row = data[i]
-        
-        # Pad row if it's shorter than headers
-        while len(row) < len(headers):
-            row.append("")
             
-        product_name = row[col_name - 1]
-        product_url = row[col_url - 1]
-        publisher = row[col_publisher - 1] if col_publisher <= len(row) else ""
-        
-        if not product_url:
-            continue
-            
-        print(f"Checking: {product_name}...")
-        
-        # Scrape data using Playwright parser with the shared page
-        try:
-            api_result = await parse_product_page(page, product_url)
-        except Exception as e:
-            api_result = {
-                "error": str(e),
-                "http_status": 0,
-                "parser_status": "fetch_error"
-            }
-            
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Log to Test Sheet
-        if MODE == "TEST":
-            raw_price_str = json.dumps(api_result.get("raw_price_value", {}), ensure_ascii=False)
-            test_log.append_row([
-                now_str,
-                product_name,
-                product_url,
-                raw_price_str,
-                api_result.get("detected_currency", "None"),
-                api_result.get("price_before_sale", "None"),
-                api_result.get("price_after_sale", "None"),
-                api_result.get("stock_status", "Unknown"),
-                api_result.get("parser_status", "Unknown"),
-                api_result.get("error", "")
-            ])
-            
-        # Use a single batch update list for all cell writes in this row
-        row_updates = []
-        
-        # Handle Errors
-        if api_result.get("error"):
-            for attempt in range(3):
-                try:
-                    error_log.append_row([
-                        now_str, product_name, product_url, "ERROR", 
-                        api_result.get("error"), api_result.get("http_status", 0)
-                    ])
-                    break
-                except Exception:
-                    if attempt == 2: print("Failed to write to error log")
-                    time.sleep(2)
-            row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_checked), 'values': [[now_str]]})
-            row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_monitor_status), 'values': [["ERROR"]]})
-            for attempt in range(3):
-                try:
-                    products_sheet.batch_update(row_updates)
-                    break
-                except Exception:
-                    time.sleep(2)
-            continue
-            
-        # Enforce Currency Safety
-        if api_result.get("currency") != "EGP" and api_result.get("parser_status") != "out_of_stock_no_price":
-            error_msg = f"Currency error: {api_result.get('parser_status')}"
-            for attempt in range(3):
-                try:
-                    error_log.append_row([now_str, product_name, product_url, "ERROR", error_msg, 200])
-                    break
-                except Exception:
-                    time.sleep(2)
-            row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_checked), 'values': [[now_str]]})
-            row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_monitor_status), 'values': [[f"ERROR: {api_result.get('parser_status')}"]]})
-            for attempt in range(3):
-                try:
-                    products_sheet.batch_update(row_updates)
-                    break
-                except Exception:
-                    time.sleep(2)
-            continue
-            
-        # Change Detection
-        old_price_before = row[col_price_before - 1]
-        old_price_after = row[col_price_after - 1]
-        old_stock = row[col_stock - 1]
-        
-        new_price_before = api_result.get("price_before_sale")
-        new_price_after = api_result.get("price_after_sale")
-        new_stock = api_result.get("stock_status")
-        
-        has_changes = False
-        change_details = {}
-        
-        if new_price_before is not None and str(old_price_before) != str(new_price_before):
-            has_changes = True
-            change_details["priceBefore"] = {"old": old_price_before, "new": new_price_before}
-            
-        if new_price_after is not None and str(old_price_after) != str(new_price_after):
-            has_changes = True
-            change_details["priceAfter"] = {"old": old_price_after, "new": new_price_after}
-            
-        if new_stock is not None and str(old_stock) != str(new_stock):
-            # Normalize old stock status to match new parsed value (e.g. "in stock" vs "In Stock")
-            if str(old_stock).lower().strip() != str(new_stock).lower().strip():
-                has_changes = True
-                change_details["stock"] = {"old": old_stock, "new": new_stock}
-            
-        # Update Sheet & Notify
-        if has_changes:
-            print(f"Changes detected for {product_name}!")
-            send_telegram_notification(product_name, product_url, change_details, publisher)
-            
-            if new_price_before is not None:
-                row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_price_before), 'values': [[new_price_before]]})
-            if new_price_after is not None:
-                row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_price_after), 'values': [[new_price_after]]})
-            if new_stock is not None:
-                row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_stock), 'values': [[new_stock]]})
+            # Pad row if it's shorter than headers
+            while len(row) < len(headers):
+                row.append("")
                 
-            row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_changed), 'values': [[now_str]]})
+            product_name = row[col_name - 1]
+            product_url = row[col_url - 1]
+            publisher = row[col_publisher - 1] if col_publisher <= len(row) else ""
             
-        # Always update status
-        row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_checked), 'values': [[now_str]]})
-        row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_monitor_status), 'values': [["OK"]]})
-        
-        # Apply all updates for this row in one resilient batch
-        for attempt in range(4):
+            if not product_url:
+                continue
+                
+            print(f"Checking: {product_name}...")
+            
+            # Scrape data using Playwright parser with the shared page
             try:
-                products_sheet.batch_update(row_updates)
-                break
+                api_result = await parse_product_page(page, product_url)
             except Exception as e:
-                if attempt == 3:
-                    print(f"Failed to update sheet for {product_name}: {e}")
-                time.sleep(3)
-        
-        # Rate Limiting
-        await asyncio.sleep(REQUEST_DELAY_SEC)
+                api_result = {
+                    "error": str(e),
+                    "http_status": 0,
+                    "parser_status": "fetch_error"
+                }
+                
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Log to Test Sheet
+            if MODE == "TEST":
+                raw_price_str = json.dumps(api_result.get("raw_price_value", {}), ensure_ascii=False)
+                test_log.append_row([
+                    now_str,
+                    product_name,
+                    product_url,
+                    raw_price_str,
+                    api_result.get("detected_currency", "None"),
+                    api_result.get("price_before_sale", "None"),
+                    api_result.get("price_after_sale", "None"),
+                    api_result.get("stock_status", "Unknown"),
+                    api_result.get("parser_status", "Unknown"),
+                    api_result.get("error", "")
+                ])
+                
+            # Use a single batch update list for all cell writes in this row
+            row_updates = []
+            
+            # Handle Errors
+            if api_result.get("error"):
+                for attempt in range(3):
+                    try:
+                        error_log.append_row([
+                            now_str, product_name, product_url, "ERROR", 
+                            api_result.get("error"), api_result.get("http_status", 0)
+                        ])
+                        break
+                    except Exception:
+                        if attempt == 2: print("Failed to write to error log")
+                        time.sleep(2)
+                row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_checked), 'values': [[now_str]]})
+                row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_monitor_status), 'values': [["ERROR"]]})
+                for attempt in range(3):
+                    try:
+                        products_sheet.batch_update(row_updates)
+                        break
+                    except Exception:
+                        time.sleep(2)
+                continue
+                
+            # Enforce Currency Safety
+            if api_result.get("currency") != "EGP" and api_result.get("parser_status") != "out_of_stock_no_price":
+                error_msg = f"Currency error: {api_result.get('parser_status')}"
+                for attempt in range(3):
+                    try:
+                        error_log.append_row([now_str, product_name, product_url, "ERROR", error_msg, 200])
+                        break
+                    except Exception:
+                        time.sleep(2)
+                row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_checked), 'values': [[now_str]]})
+                row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_monitor_status), 'values': [[f"ERROR: {api_result.get('parser_status')}"]]})
+                for attempt in range(3):
+                    try:
+                        products_sheet.batch_update(row_updates)
+                        break
+                    except Exception:
+                        time.sleep(2)
+                continue
+                
+            # Change Detection
+            old_price_before = row[col_price_before - 1]
+            old_price_after = row[col_price_after - 1]
+            old_stock = row[col_stock - 1]
+            
+            new_price_before = api_result.get("price_before_sale")
+            new_price_after = api_result.get("price_after_sale")
+            new_stock = api_result.get("stock_status")
+            
+            has_changes = False
+            change_details = {}
+            
+            if new_price_before is not None and str(old_price_before) != str(new_price_before):
+                has_changes = True
+                change_details["priceBefore"] = {"old": old_price_before, "new": new_price_before}
+                
+            if new_price_after is not None and str(old_price_after) != str(new_price_after):
+                has_changes = True
+                change_details["priceAfter"] = {"old": old_price_after, "new": new_price_after}
+                
+            if new_stock is not None and str(old_stock) != str(new_stock):
+                # Normalize old stock status to match new parsed value (e.g. "in stock" vs "In Stock")
+                if str(old_stock).lower().strip() != str(new_stock).lower().strip():
+                    has_changes = True
+                    change_details["stock"] = {"old": old_stock, "new": new_stock}
+                
+            # Update Sheet & Notify
+            if has_changes:
+                print(f"Changes detected for {product_name}!")
+                send_telegram_notification(product_name, product_url, change_details, publisher)
+                
+                if new_price_before is not None:
+                    row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_price_before), 'values': [[new_price_before]]})
+                if new_price_after is not None:
+                    row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_price_after), 'values': [[new_price_after]]})
+                if new_stock is not None:
+                    row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_stock), 'values': [[new_stock]]})
+                    
+                row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_changed), 'values': [[now_str]]})
+                
+            # Always update status
+            row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_checked), 'values': [[now_str]]})
+            row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_monitor_status), 'values': [["OK"]]})
+            
+            # Apply all updates for this row in one resilient batch
+            for attempt in range(4):
+                try:
+                    products_sheet.batch_update(row_updates)
+                    break
+                except Exception as e:
+                    if attempt == 3:
+                        print(f"Failed to update sheet for {product_name}: {e}")
+                    time.sleep(3)
+            
+            # Rate Limiting
+            await asyncio.sleep(REQUEST_DELAY_SEC)
         
         await browser.close()
     print("Monitoring run complete.")
