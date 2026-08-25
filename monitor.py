@@ -3,6 +3,7 @@ import sys
 import json
 import asyncio
 import datetime
+import time
 import requests
 import gspread
 import base64
@@ -88,7 +89,15 @@ def get_col_index(headers, name, worksheet):
         # Create column if it doesn't exist
         col_index = len(headers) + 1
         headers.append(name)
-        worksheet.update_cell(1, col_index, name)
+        # Retry logic for sheet update
+        for attempt in range(3):
+            try:
+                worksheet.update_cell(1, col_index, name)
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                time.sleep(2)
         return col_index
 
 def setup_test_log(sh):
@@ -129,9 +138,10 @@ async def main():
     except Exception as e:
         print(f"Failed to parse Google credentials JSON: {e}")
         sys.exit(1)
+    from gspread.client import BackoffClient
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    gc = gspread.authorize(creds)
+    gc = gspread.authorize(creds, client_factory=BackoffClient)
     
     sh = gc.open_by_key(SPREADSHEET_ID)
     try:
@@ -212,22 +222,48 @@ async def main():
                 api_result.get("error", "")
             ])
             
+        # Use a single batch update list for all cell writes in this row
+        row_updates = []
+        
         # Handle Errors
         if api_result.get("error"):
-            error_log.append_row([
-                now_str, product_name, product_url, "ERROR", 
-                api_result.get("error"), api_result.get("http_status", 0)
-            ])
-            products_sheet.update_cell(i + 1, col_last_checked, now_str)
-            products_sheet.update_cell(i + 1, col_monitor_status, "ERROR")
+            for attempt in range(3):
+                try:
+                    error_log.append_row([
+                        now_str, product_name, product_url, "ERROR", 
+                        api_result.get("error"), api_result.get("http_status", 0)
+                    ])
+                    break
+                except Exception:
+                    if attempt == 2: print("Failed to write to error log")
+                    time.sleep(2)
+            row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_checked), 'values': [[now_str]]})
+            row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_monitor_status), 'values': [["ERROR"]]})
+            for attempt in range(3):
+                try:
+                    products_sheet.batch_update(row_updates)
+                    break
+                except Exception:
+                    time.sleep(2)
             continue
             
         # Enforce Currency Safety
         if api_result.get("currency") != "EGP" and api_result.get("parser_status") != "out_of_stock_no_price":
             error_msg = f"Currency error: {api_result.get('parser_status')}"
-            error_log.append_row([now_str, product_name, product_url, "ERROR", error_msg, 200])
-            products_sheet.update_cell(i + 1, col_last_checked, now_str)
-            products_sheet.update_cell(i + 1, col_monitor_status, f"ERROR: {api_result.get('parser_status')}")
+            for attempt in range(3):
+                try:
+                    error_log.append_row([now_str, product_name, product_url, "ERROR", error_msg, 200])
+                    break
+                except Exception:
+                    time.sleep(2)
+            row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_checked), 'values': [[now_str]]})
+            row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_monitor_status), 'values': [[f"ERROR: {api_result.get('parser_status')}"]]})
+            for attempt in range(3):
+                try:
+                    products_sheet.batch_update(row_updates)
+                    break
+                except Exception:
+                    time.sleep(2)
             continue
             
         # Change Detection
@@ -261,20 +297,28 @@ async def main():
             print(f"Changes detected for {product_name}!")
             send_telegram_notification(product_name, product_url, change_details, publisher)
             
-            updates = []
             if new_price_before is not None:
-                updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_price_before), 'values': [[new_price_before]]})
+                row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_price_before), 'values': [[new_price_before]]})
             if new_price_after is not None:
-                updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_price_after), 'values': [[new_price_after]]})
+                row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_price_after), 'values': [[new_price_after]]})
             if new_stock is not None:
-                updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_stock), 'values': [[new_stock]]})
+                row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_stock), 'values': [[new_stock]]})
                 
-            updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_changed), 'values': [[now_str]]})
-            products_sheet.batch_update(updates)
+            row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_changed), 'values': [[now_str]]})
             
         # Always update status
-        products_sheet.update_cell(i + 1, col_last_checked, now_str)
-        products_sheet.update_cell(i + 1, col_monitor_status, "OK")
+        row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_last_checked), 'values': [[now_str]]})
+        row_updates.append({'range': gspread.utils.rowcol_to_a1(i + 1, col_monitor_status), 'values': [["OK"]]})
+        
+        # Apply all updates for this row in one resilient batch
+        for attempt in range(4):
+            try:
+                products_sheet.batch_update(row_updates)
+                break
+            except Exception as e:
+                if attempt == 3:
+                    print(f"Failed to update sheet for {product_name}: {e}")
+                time.sleep(3)
         
         # Rate Limiting
         await asyncio.sleep(REQUEST_DELAY_SEC)
