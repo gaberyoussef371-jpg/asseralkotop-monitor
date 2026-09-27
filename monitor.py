@@ -16,7 +16,9 @@ from aseeralkotb_product_parser import parse_product_page
 # ==================================================
 MODE = os.getenv("MONITOR_MODE", "TEST") # "TEST" or "FULL"
 TEST_LIMIT = 10
-REQUEST_DELAY_SEC = 1.5
+REQUEST_DELAY_SEC = 0.3
+PRODUCT_TIMEOUT_SEC = 35
+BROWSER_RECYCLE_EVERY = 25
 
 # Secrets
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -177,15 +179,28 @@ async def main():
     
     print(f"Running in {MODE} mode. Checking {limit - 1} products...")
     
-    # Start a single shared browser session for the entire run
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
+    async def start_browser_session(playwright):
+        browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"])
         context = await browser.new_context(locale="ar-EG", user_agent=(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
         ))
         page = await context.new_page()
-        page.set_default_timeout(30_000)
+        page.set_default_timeout(15_000)
+        return browser, context, page
+
+    async def stop_browser_session(browser, context):
+        # Cleanup must never prevent the monitor from continuing with a fresh session.
+        for resource in (context, browser):
+            try:
+                await resource.close()
+            except Exception as exc:
+                print(f"Browser cleanup warning: {type(exc).__name__}: {exc}", flush=True)
+
+    # Keep one session for speed, but periodically recycle it because long runs
+    # can eventually corrupt Chromium's Playwright transport.
+    async with async_playwright() as p:
+        browser, context, page = await start_browser_session(p)
         
         # Process products sequentially to respect rate limits
         for i in range(1, limit):
@@ -202,11 +217,20 @@ async def main():
             if not product_url:
                 continue
                 
-            print(f"Checking: {product_name}...")
+            print(f"Checking {i}/{limit - 1}: {product_name}...", flush=True)
             
             # Scrape data using Playwright parser with the shared page
             try:
-                api_result = await parse_product_page(page, product_url)
+                api_result = await asyncio.wait_for(
+                    parse_product_page(page, product_url),
+                    timeout=PRODUCT_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError:
+                api_result = {
+                    "error": f"Product exceeded {PRODUCT_TIMEOUT_SEC}-second timeout",
+                    "http_status": 0,
+                    "parser_status": "timeout",
+                }
             except Exception as e:
                 api_result = {
                     "error": str(e),
@@ -255,6 +279,8 @@ async def main():
                         break
                     except Exception:
                         time.sleep(2)
+                await stop_browser_session(browser, context)
+                browser, context, page = await start_browser_session(p)
                 continue
                 
             # Enforce Currency Safety
@@ -332,9 +358,14 @@ async def main():
             
             # Rate Limiting
             await asyncio.sleep(REQUEST_DELAY_SEC)
+
+            if (i % BROWSER_RECYCLE_EVERY) == 0 and i < limit - 1:
+                print(f"Recycling browser session after {i} products...", flush=True)
+                await stop_browser_session(browser, context)
+                browser, context, page = await start_browser_session(p)
         
-        await browser.close()
-    print("Monitoring run complete.")
+        await stop_browser_session(browser, context)
+    print("Monitoring run complete.", flush=True)
 
 if __name__ == "__main__":
     asyncio.run(main())

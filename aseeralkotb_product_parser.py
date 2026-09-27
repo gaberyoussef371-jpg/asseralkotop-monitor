@@ -29,6 +29,8 @@ AVAILABILITY_SELECTOR = '[itemprop="availability"]'
 NOTIFY_TEXT = "أبلغني عند توفره للشراء"
 BUY_TEXT = "شراء نسخة ورقية"
 ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+NAVIGATION_TIMEOUT_MS = 25_000
+PRODUCT_SELECTOR_TIMEOUT_MS = 8_000
 
 
 def egypt_url(product_url: str) -> str:
@@ -246,8 +248,15 @@ async def parse_product_page(page: Page, product_url: str) -> dict[str, Any]:
     """Navigate to country=EG and parse the product's server-rendered HTML."""
     requested_url = egypt_url(product_url)
     try:
-        response = await page.goto(requested_url, wait_until="domcontentloaded", timeout=90_000)
-        await page.locator(PRODUCT_NAME_SELECTOR).first.wait_for(state="attached", timeout=30_000)
+        response = await page.goto(
+            requested_url,
+            wait_until="domcontentloaded",
+            timeout=NAVIGATION_TIMEOUT_MS,
+        )
+        await page.locator(PRODUCT_NAME_SELECTOR).first.wait_for(
+            state="attached",
+            timeout=PRODUCT_SELECTOR_TIMEOUT_MS,
+        )
         html = await page.content()
         result = parse_product_html(html, product_url, response.status if response else None)
         result["requested_url"] = requested_url
