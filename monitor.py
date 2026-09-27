@@ -19,6 +19,7 @@ TEST_LIMIT = 10
 REQUEST_DELAY_SEC = 0.3
 PRODUCT_TIMEOUT_SEC = 35
 BROWSER_RECYCLE_EVERY = 25
+BROWSER_CLEANUP_TIMEOUT_SEC = 5
 
 # Secrets
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -193,7 +194,12 @@ async def main():
         # Cleanup must never prevent the monitor from continuing with a fresh session.
         for resource in (context, browser):
             try:
-                await resource.close()
+                await asyncio.wait_for(
+                    resource.close(),
+                    timeout=BROWSER_CLEANUP_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError:
+                print("Browser cleanup timed out; continuing with a fresh session.", flush=True)
             except Exception as exc:
                 print(f"Browser cleanup warning: {type(exc).__name__}: {exc}", flush=True)
 
