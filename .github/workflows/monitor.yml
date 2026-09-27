@@ -6,6 +6,15 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
     # Allows you to run this workflow manually from the Actions tab
+    inputs:
+      monitor_mode:
+        description: "Products to check in this manual run"
+        required: true
+        default: TEST
+        type: choice
+        options:
+          - TEST
+          - FULL
 
 concurrency:
   group: asseralkotop-monitor
@@ -33,7 +42,7 @@ jobs:
         
     - name: Run Monitor
       env:
-        MONITOR_MODE: ${{ vars.MONITOR_MODE }}
+        MONITOR_MODE: ${{ inputs.monitor_mode || vars.MONITOR_MODE }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
         GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
