@@ -36,9 +36,9 @@ jobs:
         
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        playwright install chromium
+        timeout --signal=TERM --kill-after=15s 5m python -m pip install --upgrade pip
+        timeout --signal=TERM --kill-after=15s 5m pip install -r requirements.txt
+        timeout --signal=TERM --kill-after=15s 5m playwright install chromium
         
     - name: Run Monitor
       env:
@@ -49,4 +49,8 @@ jobs:
         GOOGLE_CREDENTIALS_B64: ${{ secrets.GOOGLE_CREDENTIALS_B64 }}
         SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
       run: |
-        timeout --signal=TERM --kill-after=30s 160m python -u monitor.py
+        if [ "$MONITOR_MODE" = "TEST" ]; then
+          timeout --signal=TERM --kill-after=30s 15m python -u monitor.py
+        else
+          timeout --signal=TERM --kill-after=30s 160m python -u monitor.py
+        fi
