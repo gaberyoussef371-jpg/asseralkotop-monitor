@@ -40,4 +40,4 @@ jobs:
         GOOGLE_CREDENTIALS_B64: ${{ secrets.GOOGLE_CREDENTIALS_B64 }}
         SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
       run: |
-        python monitor.py
+        timeout --signal=TERM --kill-after=30s 160m python -u monitor.py

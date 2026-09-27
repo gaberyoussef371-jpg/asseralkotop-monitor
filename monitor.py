@@ -20,6 +20,7 @@ REQUEST_DELAY_SEC = 0.3
 PRODUCT_TIMEOUT_SEC = 35
 BROWSER_RECYCLE_EVERY = 25
 BROWSER_CLEANUP_TIMEOUT_SEC = 5
+GOOGLE_API_TIMEOUT_SEC = 30
 
 # Secrets
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -132,6 +133,7 @@ async def main():
         print("Missing Google credentials or Spreadsheet ID")
         sys.exit(1)
         
+    print("Connecting to Google Sheets...", flush=True)
     # Setup Google Sheets client
     try:
         if GOOGLE_CREDENTIALS_B64:
@@ -146,7 +148,16 @@ async def main():
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     gc = gspread.authorize(creds, client_factory=BackoffClient)
+    # gspread uses requests without a default timeout. A stalled Google API
+    # connection would otherwise block the monitor forever before any row update.
+    if getattr(gc, "session", None) is not None:
+        original_request = gc.session.request
+        def request_with_timeout(method, url, **kwargs):
+            kwargs.setdefault("timeout", GOOGLE_API_TIMEOUT_SEC)
+            return original_request(method, url, **kwargs)
+        gc.session.request = request_with_timeout
     
+    print("Opening the Products sheet...", flush=True)
     sh = gc.open_by_key(SPREADSHEET_ID)
     try:
         products_sheet = sh.worksheet(SHEET_PRODUCTS)
@@ -155,6 +166,7 @@ async def main():
         sys.exit(1)
         
     data = products_sheet.get_all_values()
+    print(f"Loaded {max(0, len(data) - 1)} product rows from Google Sheets.", flush=True)
     if len(data) <= 1:
         print("No data found in Products sheet.")
         return
